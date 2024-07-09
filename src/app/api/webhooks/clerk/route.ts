@@ -1,6 +1,9 @@
 import { Webhook } from "svix";
 import { headers } from "next/headers";
-import { WebhookEvent } from "@clerk/nextjs/server";
+import { clerkClient, WebhookEvent } from "@clerk/nextjs/server";
+
+import { createUser, deleteUser, updateUser } from "@/lib/actions/user.actions";
+import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   // You can find this in the Clerk Dashboard -> Webhooks -> choose the endpoint
@@ -49,12 +52,74 @@ export async function POST(req: Request) {
   }
 
   // Do something with the payload
-  // For this guide, you simply log the payload to the console
+  // Extract the ID and event type
   const { id } = evt.data;
   const eventType = evt.type;
-  if (evt.type === "user.created") {
-    console.log("userId:", evt.data.id);
+
+  // CREATE
+
+  if (eventType === "user.created") {
+    // extract the user info
+    const { id, email_addresses, image_url, first_name, last_name, username } =
+      evt.data;
+
+    // set the user
+    const user = {
+      clerkId: id,
+      email: email_addresses[0].email_address,
+      username: username!,
+      firstName: first_name!,
+      lastName: last_name!,
+      photo: image_url,
+    };
+
+    // Create the user in our database
+    const newUser = await createUser(user);
+
+    // Sync the Clerk user ID to the one in our database by making them the same
+    if (newUser) {
+      await clerkClient.users.updateUserMetadata(id, {
+        publicMetadata: {
+          userId: newUser._id,
+        },
+      });
+    }
+
+    return NextResponse.json({ message: "OK", user: newUser });
   }
+
+  // UPDATE
+  if (eventType === "user.updated") {
+    // Extract the user info
+    const { id, image_url, first_name, last_name, username } = evt.data;
+
+    // Prepare the updated user data
+    const user = {
+      firstName: first_name!,
+      lastName: last_name!,
+      username: username!,
+      photo: image_url,
+    };
+
+    // Update the user in our database
+    const updatedUser = await updateUser(id, user);
+
+    return NextResponse.json({ message: "OK", user: updatedUser });
+  }
+
+  // DELETE
+  if (eventType === "user.deleted") {
+    const { id } = evt.data;
+
+    // Delete the user by ID in our database
+
+    const deletedUser = await deleteUser(id!);
+
+    return NextResponse.json({ message: "OK", user: deletedUser });
+  }
+
+  console.log(`Webhook with and ID of ${id} and type of ${eventType}`);
+  console.log("Webhook body:", body);
 
   return new Response("", { status: 200 });
 }
